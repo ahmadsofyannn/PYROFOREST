@@ -262,14 +262,28 @@ def generate_heart_asset(w, h, active=True):
   return cairo_surface_to_pygame(surf)
 
 
+def prepare_landscape_scene(surface, target_w, target_h):
+  """Memastikan scene intro berorientasi landscape dan memenuhi layar target"""
+  img = surface
+  w, h = img.get_size()
+  if h > w:
+    img = pygame.transform.rotate(img, 90)
+    w, h = img.get_size()
+
+  scale = max(target_w / w, target_h / h)
+  scaled_w = int(math.ceil(w * scale))
+  scaled_h = int(math.ceil(h * scale))
+  scaled = pygame.transform.scale(img, (scaled_w, scaled_h))
+
+  crop_x = max(0, (scaled_w - target_w) // 2)
+  crop_y = max(0, (scaled_h - target_h) // 2)
+  return scaled.subsurface((crop_x, crop_y, target_w, target_h)).copy()
+
+
 # Generate Aset Pycairo
 img_fire = generate_fire_asset(55, 65)
 img_smoke = generate_smoke_asset(60, 60)
 img_water = generate_water_asset(30, 30)
-img_burning_tree = generate_burning_tree_asset(110, 120)
-img_well = generate_well_asset(120, 120)
-img_bucket_empty = generate_bucket_asset(42, 42, filled=False)
-img_bucket_full = generate_bucket_asset(42, 42, filled=True)
 img_heart_full = generate_heart_asset(24, 24, active=True)
 img_heart_empty = generate_heart_asset(24, 24, active=False)
 
@@ -277,6 +291,7 @@ img_heart_empty = generate_heart_asset(24, 24, active=False)
 NUM_MAPS = 5
 WORLD_WIDTH = SCREEN_WIDTH * NUM_MAPS
 camera_x = 0
+BUCKET_CAPACITY = 6
 
 # --- PEMUATAN ASET GAMBAR UTAMA ---
 try:
@@ -309,6 +324,29 @@ try:
 
   img_hero1 = pygame.image.load("assets/hero1.png").convert_alpha()
   img_hero2 = pygame.image.load("assets/hero2.png").convert_alpha()
+  img_coin = pygame.transform.scale(
+      pygame.image.load("assets/coin_cute.png").convert_alpha(), (24, 24)
+  )
+  img_well = pygame.transform.scale(
+      pygame.image.load("assets/well.png").convert_alpha(), (100, 150)
+  )
+  img_bucket_empty = pygame.transform.scale(
+      pygame.image.load("assets/bucket.png").convert_alpha(), (42, 42)
+  )
+  img_bucket_full = img_bucket_empty.copy()
+  pygame.draw.ellipse(img_bucket_full, (40, 145, 230), (12, 14, 18, 5))
+
+  tree_sheet = pygame.image.load("assets/trees_output.png").convert()
+  img_tree_sprites = []
+  for tree_crop in (
+      pygame.Rect(0, 0, 480, 512),
+      pygame.Rect(480, 0, 544, 512),
+  ):
+    tree_sprite = pygame.transform.scale(
+        tree_sheet.subsurface(tree_crop).copy(), (110, 120)
+    )
+    tree_sprite.set_colorkey((0, 0, 0))
+    img_tree_sprites.append(tree_sprite)
 
   hero1_frames = [
       pygame.image.load("assets/hero1_gerak1.png").convert_alpha(),
@@ -319,19 +357,109 @@ try:
       pygame.image.load("assets/hero2_gerak2.png").convert_alpha(),
   ]
 
+  intro_scene_files = (
+      "assets/Scene 1.jpeg",
+      "assets/Scene 2.jpeg",
+      "assets/Scene 3.jpg",
+      "assets/Scene 4.jpeg",
+      "assets/Scene 5.jpeg",
+  )
+  intro_scene_images = []
+  for scene_file in intro_scene_files:
+    scene_image = pygame.image.load(scene_file).convert()
+    intro_scene_images.append(
+        prepare_landscape_scene(scene_image, SCREEN_WIDTH, SCREEN_HEIGHT)
+    )
+
+  pygame.mixer.music.load("assets/introbgm.mp3")
+  pygame.mixer.music.set_volume(0.35)
+  pygame.mixer.music.play(-1)
+
 except Exception as e:
-  print(f"Error memuat aset gambar: {e}")
+  print(f"Error memuat aset game: {e}")
   pygame.quit()
   sys.exit()
 
 
 # --- GAME STATES & DIFFICULTY CONFIG ---
 class GameState:
+  INTRO = 0
   MENU = 1
   SELECT_HERO = 2
   PLAYING = 3
   WIN = 4
   GAME_OVER = 5
+
+
+INTRO_CAPTIONS = (
+    "Siang itu, suasana desa berjalan seperti biasanya. Tak ada yang menyangka, ketenangan ini akan segera berubah menjadi bencana.",
+    "Tiba-tiba, suara gemerisik terdengar dari balik semak. Sesuatu tampak bergerak di antara dedaunan.",
+    "Saat semak tersingkap, sebuah pemandangan mengejutkan terlihat. Seseorang sengaja membakar vegetasi di tepi hutan.",
+    "Pelaku langsung melarikan diri, meninggalkan api yang mulai menjalar.",
+    "Kini, hutan dan kehidupan sekitarnya berada dalam bahaya. Mampukah kita menghentikan kobaran api sebelum semuanya terlambat?",
+)
+INTRO_SCENE_DURATION = 5.0
+INTRO_FADE_DURATION = 0.75
+INTRO_DURATION = INTRO_SCENE_DURATION * len(INTRO_CAPTIONS)
+INTRO_TEXT_FONT = pygame.font.Font(None, 19)
+
+
+def render_pixel_caption(text):
+  max_width = (SCREEN_WIDTH - 48) // 2
+  words = text.split()
+  lines = []
+  current_line = ""
+  for word in words:
+    candidate = f"{current_line} {word}".strip()
+    if current_line and INTRO_TEXT_FONT.size(candidate)[0] > max_width:
+      lines.append(current_line)
+      current_line = word
+    else:
+      current_line = candidate
+  if current_line:
+    lines.append(current_line)
+
+  line_height = INTRO_TEXT_FONT.get_linesize()
+  low_res_caption = pygame.Surface(
+      (max_width, len(lines) * line_height), pygame.SRCALPHA
+  )
+  for line_index, line in enumerate(lines):
+    line_image = INTRO_TEXT_FONT.render(line, False, (255, 244, 205))
+    low_res_caption.blit(line_image, (0, line_index * line_height))
+  return pygame.transform.scale(
+      low_res_caption,
+      (low_res_caption.get_width() * 2, low_res_caption.get_height() * 2),
+  )
+
+
+INTRO_CAPTION_IMAGES = tuple(
+    render_pixel_caption(caption) for caption in INTRO_CAPTIONS
+)
+INTRO_CAPTION_PANELS = []
+for caption_image in INTRO_CAPTION_IMAGES:
+  panel = pygame.Surface(
+      (SCREEN_WIDTH - 32, caption_image.get_height() + 28), pygame.SRCALPHA
+  )
+  panel.fill((8, 12, 18, 220))
+  pygame.draw.rect(panel, (232, 190, 96), panel.get_rect(), 2)
+  panel.blit(
+      caption_image,
+      (
+          (panel.get_width() - caption_image.get_width()) // 2,
+          (panel.get_height() - caption_image.get_height()) // 2,
+      ),
+  )
+  INTRO_CAPTION_PANELS.append(panel)
+INTRO_CAPTION_PANELS = tuple(INTRO_CAPTION_PANELS)
+INTRO_FADE_OVERLAY = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+INTRO_FADE_OVERLAY.fill((0, 0, 0))
+current_state = GameState.INTRO
+intro_elapsed = 0.0
+
+
+def finish_intro():
+  global current_state
+  current_state = GameState.MENU
 
 
 DIFFICULTY_SETTINGS = {
@@ -352,13 +480,12 @@ DIFFICULTY_SETTINGS = {
     "Hard": {
         "max_lives": 2,
         "fire_cooldown_ms": 1100,
-        "breath_base_drain": 3.8,
+        "breath_base_drain": 3.6,
         "breath_smoke_drain": 7.0,
         "breath_heal_on_extinguish": 0.0,
     },
 }
 
-current_state = GameState.MENU
 selected_hero = 1
 selected_difficulty = "Medium"
 
@@ -429,6 +556,19 @@ def build_platforms_from_sequence(seq):
   return plats
 
 
+def build_wells_from_sequence(seq):
+  """Membuat 2 sumur: 1 di awal game (segmen 1) dan 1 di tengah game (segmen 3)"""
+  well_list = [pygame.Rect(210, 294, 100, 110)]
+  if len(seq) >= 3:
+    mid_seg_idx = 2
+    mid_offset_x = mid_seg_idx * SCREEN_WIDTH
+    mid_ground_y = 390 if seq[mid_seg_idx] == 1 else 412
+    well_list.append(
+        pygame.Rect(mid_offset_x + 180, mid_ground_y - 96, 100, 110)
+    )
+  return well_list
+
+
 # Inisialisasi awal
 map_sequence = generate_random_map_sequence(NUM_MAPS)
 platforms = build_platforms_from_sequence(map_sequence)
@@ -436,8 +576,8 @@ platforms = build_platforms_from_sequence(map_sequence)
 # Objek Ember di awal map
 bucket_pickup_rect = pygame.Rect(15, 350, 42, 42)
 
-# SUMUR AGAK KE DEPAN (menapak di platform kedua y=390, sebelum area pohon api)
-wells = [pygame.Rect(210, 294, 100, 110)]
+# 2 SUMUR: awal game & tengah game
+wells = build_wells_from_sequence(map_sequence)
 
 
 # Fungsi untuk mengacak posisi pohon agar selalu menancap pas di atas platform
@@ -458,6 +598,7 @@ def generate_random_trees():
     ry = plat.top - 120
     tree_list.append({
         "rect": pygame.Rect(rx, ry, 110, 120),
+        "image": random.choice(img_tree_sprites),
         "fire_hp": 2,
         "last_hurt_time": 0,
         "armor_blocked": False,
@@ -471,7 +612,7 @@ burning_trees = generate_random_trees()
 
 def apply_difficulty_and_reset():
   global hero_x, hero_y, hero_vel_y, score, has_bucket, water_ammo
-  global burning_trees, splash_effects, map_sequence, platforms
+  global burning_trees, splash_effects, map_sequence, platforms, wells
   global max_lives, lives, breath, game_over_reason, hurt_flash_timer
 
   cfg = DIFFICULTY_SETTINGS[selected_difficulty]
@@ -491,6 +632,7 @@ def apply_difficulty_and_reset():
 
   map_sequence = generate_random_map_sequence(NUM_MAPS)
   platforms = build_platforms_from_sequence(map_sequence)
+  wells = build_wells_from_sequence(map_sequence)
   burning_trees = generate_random_trees()
 
 
@@ -524,7 +666,10 @@ while running:
     elif event.type == pygame.MOUSEBUTTONDOWN:
       mouse_pos = pygame.mouse.get_pos()
 
-      if current_state == GameState.MENU:
+      if current_state == GameState.INTRO:
+        finish_intro()
+
+      elif current_state == GameState.MENU:
         if 380 <= mouse_pos[0] <= 580 and 300 <= mouse_pos[1] <= 370:
           current_state = GameState.SELECT_HERO
         elif 380 <= mouse_pos[0] <= 580 and 400 <= mouse_pos[1] <= 470:
@@ -576,7 +721,10 @@ while running:
           current_state = GameState.MENU
 
     elif event.type == pygame.KEYDOWN:
-      if current_state == GameState.PLAYING:
+      if current_state == GameState.INTRO:
+        finish_intro()
+
+      elif current_state == GameState.PLAYING:
         hitbox_offset_x = 30
         hitbox_w = hero_width - 60
         hitbox_h = hero_height - 15
@@ -588,7 +736,7 @@ while running:
           if has_bucket:
             for well in wells:
               if player_rect.colliderect(well.inflate(60, 30)):
-                water_ammo = 5
+                water_ammo = BUCKET_CAPACITY
 
         elif event.key == pygame.K_f:
           if has_bucket and water_ammo > 0:
@@ -614,7 +762,39 @@ while running:
                   breath = min(100.0, breath + cfg["breath_heal_on_extinguish"])
 
   # 2. Update & Render Tampilan Berdasarkan State
-  if current_state == GameState.MENU:
+  if current_state == GameState.INTRO:
+    intro_elapsed += dt
+    if intro_elapsed >= INTRO_DURATION:
+      finish_intro()
+    else:
+      scene_index = int(intro_elapsed / INTRO_SCENE_DURATION)
+      scene_elapsed = intro_elapsed - scene_index * INTRO_SCENE_DURATION
+      scene_image = intro_scene_images[scene_index]
+      scene_rect = scene_image.get_rect(
+          center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
+      )
+      screen.blit(scene_image, scene_rect)
+
+      caption_panel = INTRO_CAPTION_PANELS[scene_index]
+      screen.blit(
+          caption_panel,
+          (
+              16,
+              SCREEN_HEIGHT - caption_panel.get_height() - 16,
+          ),
+      )
+
+      fade_progress = min(
+          scene_elapsed / INTRO_FADE_DURATION,
+          (INTRO_SCENE_DURATION - scene_elapsed) / INTRO_FADE_DURATION,
+          1.0,
+      )
+      INTRO_FADE_OVERLAY.set_alpha(
+          int(255 * (1.0 - max(0.0, fade_progress)))
+      )
+      screen.blit(INTRO_FADE_OVERLAY, (0, 0))
+
+  elif current_state == GameState.MENU:
     screen.blit(img_menu, (0, 0))
 
   elif current_state == GameState.SELECT_HERO:
@@ -704,6 +884,14 @@ while running:
         f"Koin Anda: {player_coins} Koin", True, (255, 215, 0)
     )
     screen.blit(coin_text, (550, 188))
+    coin_icon = pygame.transform.scale(img_coin, (22, 22))
+    screen.blit(
+        coin_icon,
+        (
+            550 + coin_text.get_width() + 8,
+            188 + (coin_text.get_height() - 22) // 2,
+        ),
+    )
 
     item1_bought = "Semprotan Air" in inventory
     btn1_color = (100, 100, 100) if item1_bought else (70, 130, 180)
@@ -849,7 +1037,9 @@ while running:
       current_state = GameState.GAME_OVER
     elif breath <= 0:
       breath = 0.0
-      game_over_reason = "Pernapasan habis (ISPA) akibat terlalu lama menghirup asap!"
+      game_over_reason = (
+          "Pernapasan habis (ISPA) akibat terlalu lama menghirup asap!"
+      )
       current_state = GameState.GAME_OVER
     elif all(t["fire_hp"] == 0 for t in burning_trees):
       score += int(breath) * 2
@@ -889,9 +1079,10 @@ while running:
 
     font_prompt = pygame.font.SysFont(None, 20)
 
-    # Render Sumur Agak ke Depan (Sebelum Pohon Api)
+    # Render 2 Sumur (Awal Game & Tengah Game)
     for well in wells:
-      screen.blit(img_well, (well.x - camera_x, well.y))
+      well_top = well.bottom - img_well.get_height()
+      screen.blit(img_well, (well.x - camera_x, well_top))
       if player_rect.colliderect(well.inflate(60, 30)):
         msg = (
             "Tekan [E] Isi Air"
@@ -900,7 +1091,7 @@ while running:
         )
         screen.blit(
             font_prompt.render(msg, True, (255, 255, 0)),
-            (well.x - camera_x, well.y - 25),
+            (well.x - camera_x, well_top - 25),
         )
 
     # Ember di Awal Map
@@ -917,7 +1108,7 @@ while running:
     # Render Pohon Kebakaran
     spray_rect = get_spray_area(player_rect)
     for tree in burning_trees:
-      screen.blit(img_burning_tree, (tree["rect"].x - camera_x, tree["rect"].y))
+      screen.blit(tree["image"], (tree["rect"].x - camera_x, tree["rect"].y))
       if tree["fire_hp"] > 0:
         wobble = math.sin(pygame.time.get_ticks() * 0.01) * 4
         screen.blit(
@@ -995,7 +1186,9 @@ while running:
     bar_x = breath_x + 95
     bar_w = 135
     bar_h = 16
-    pygame.draw.rect(screen, (50, 55, 65), (bar_x, 12, bar_w, bar_h), border_radius=4)
+    pygame.draw.rect(
+        screen, (50, 55, 65), (bar_x, 12, bar_w, bar_h), border_radius=4
+    )
     fill_w = int(bar_w * (breath / 100.0))
     if breath > 50:
       bar_col = (60, 200, 120)
@@ -1004,7 +1197,9 @@ while running:
     else:
       bar_col = (230, 60, 60)
     if fill_w > 0:
-      pygame.draw.rect(screen, bar_col, (bar_x, 12, fill_w, bar_h), border_radius=4)
+      pygame.draw.rect(
+          screen, bar_col, (bar_x, 12, fill_w, bar_h), border_radius=4
+      )
     pygame.draw.rect(
         screen, (220, 220, 220), (bar_x, 12, bar_w, bar_h), 1, border_radius=4
     )
@@ -1015,15 +1210,37 @@ while running:
     status_ember = (
         "Belum Ada"
         if not has_bucket
-        else f"Terisi ({water_ammo}/5)" if water_ammo > 0 else "Kosong"
+        else (
+            f"Terisi ({water_ammo}/{BUCKET_CAPACITY})"
+            if water_ammo > 0
+            else "Kosong"
+        )
     )
-    right_hud = font_info.render(
-        f"[{selected_difficulty}]  Skor: {score}  |  Koin: {player_coins}  |"
-        f"  Ember: {status_ember}",
+    hud_prefix = font_info.render(
+        f"[{selected_difficulty}]  Skor: {score}  |  Koin: {player_coins}",
         True,
         (255, 240, 180),
     )
-    screen.blit(right_hud, (SCREEN_WIDTH - right_hud.get_width() - 18, 12))
+    hud_suffix = font_info.render(
+        f"  |  Ember: {status_ember}", True, (255, 240, 180)
+    )
+    hud_coin_icon = pygame.transform.scale(img_coin, (18, 18))
+    hud_width = (
+        hud_prefix.get_width()
+        + 4
+        + hud_coin_icon.get_width()
+        + hud_suffix.get_width()
+    )
+    hud_x = SCREEN_WIDTH - hud_width - 18
+    screen.blit(hud_prefix, (hud_x, 12))
+    hud_coin_x = hud_x + hud_prefix.get_width() + 4
+    screen.blit(
+        hud_coin_icon,
+        (hud_coin_x, 12 + (hud_prefix.get_height() - 18) // 2),
+    )
+    screen.blit(
+        hud_suffix, (hud_coin_x + hud_coin_icon.get_width(), 12)
+    )
 
     # Baris Panduan Singkat & Sisa Pohon Api
     remaining_fires = sum(1 for t in burning_trees if t["fire_hp"] > 0)
@@ -1099,9 +1316,19 @@ while running:
     coin_surf = font_end_sub.render(
         f"Total Koin Anda: {player_coins} Koin", True, (255, 230, 100)
     )
+    coin_icon = pygame.transform.scale(img_coin, (22, 22))
+    coin_group_width = coin_surf.get_width() + 8 + coin_icon.get_width()
+    coin_group_x = (SCREEN_WIDTH - coin_group_width) // 2
     screen.blit(
         coin_surf,
-        (SCREEN_WIDTH // 2 - coin_surf.get_width() // 2, panel_y + 152),
+        (coin_group_x, panel_y + 152),
+    )
+    screen.blit(
+        coin_icon,
+        (
+            coin_group_x + coin_surf.get_width() + 8,
+            panel_y + 152 + (coin_surf.get_height() - 22) // 2,
+        ),
     )
 
     btn_retry_rect = pygame.Rect(panel_x + 85, panel_y + 215, 150, 45)
