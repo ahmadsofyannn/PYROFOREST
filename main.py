@@ -2,6 +2,7 @@ import io
 import math
 import random
 import sys
+
 import cairo
 import pygame
 
@@ -32,7 +33,7 @@ def make_dark_bg_transparent(surface, threshold=22):
   w, h = surf.get_size()
   for y in range(h):
     for x in range(w):
-      r, g, b, a = surf.get_at((x, y))
+      r, g, b, _ = surf.get_at((x, y))
       if r <= threshold and g <= threshold and b <= threshold:
         surf.set_at((x, y), (r, g, b, 0))
   return surf
@@ -271,8 +272,8 @@ def prepare_landscape_scene(surface, target_w, target_h):
     w, h = img.get_size()
 
   scale = max(target_w / w, target_h / h)
-  scaled_w = int(math.ceil(w * scale))
-  scaled_h = int(math.ceil(h * scale))
+  scaled_w = math.ceil(w * scale)
+  scaled_h = math.ceil(h * scale)
   scaled = pygame.transform.scale(img, (scaled_w, scaled_h))
 
   crop_x = max(0, (scaled_w - target_w) // 2)
@@ -375,7 +376,7 @@ try:
   pygame.mixer.music.set_volume(0.35)
   pygame.mixer.music.play(-1)
 
-except Exception as e:
+except (pygame.error, OSError) as e:
   print(f"Error memuat aset game: {e}")
   pygame.quit()
   sys.exit()
@@ -612,7 +613,7 @@ burning_trees = generate_random_trees()
 
 def apply_difficulty_and_reset():
   global hero_x, hero_y, hero_vel_y, score, has_bucket, water_ammo
-  global burning_trees, splash_effects, map_sequence, platforms, wells
+  global burning_trees, map_sequence, platforms, wells
   global max_lives, lives, breath, game_over_reason, hurt_flash_timer
 
   cfg = DIFFICULTY_SETTINGS[selected_difficulty]
@@ -698,14 +699,22 @@ while running:
           current_state = GameState.PLAYING
 
         # Shop Item
-        elif 550 <= mouse_pos[0] <= 850 and 230 <= mouse_pos[1] <= 275:
-          if player_coins >= 50 and "Semprotan Air" not in inventory:
-            player_coins -= 50
-            inventory.append("Semprotan Air")
-        elif 550 <= mouse_pos[0] <= 850 and 300 <= mouse_pos[1] <= 345:
-          if player_coins >= 100 and "Baju Anti Api" not in inventory:
-            player_coins -= 100
-            inventory.append("Baju Anti Api")
+        elif (
+            550 <= mouse_pos[0] <= 850
+            and 230 <= mouse_pos[1] <= 275
+            and player_coins >= 50
+            and "Semprotan Air" not in inventory
+        ):
+          player_coins -= 50
+          inventory.append("Semprotan Air")
+        elif (
+            550 <= mouse_pos[0] <= 850
+            and 300 <= mouse_pos[1] <= 345
+            and player_coins >= 100
+            and "Baju Anti Api" not in inventory
+        ):
+          player_coins -= 100
+          inventory.append("Baju Anti Api")
 
       elif current_state in (GameState.WIN, GameState.GAME_OVER):
         panel_x = SCREEN_WIDTH // 2 - 260
@@ -732,34 +741,32 @@ while running:
             hero_x + hitbox_offset_x, hero_y, hitbox_w, hitbox_h
         )
 
-        if event.key == pygame.K_e:
-          if has_bucket:
-            for well in wells:
-              if player_rect.colliderect(well.inflate(60, 30)):
-                water_ammo = BUCKET_CAPACITY
+        if event.key == pygame.K_e and has_bucket:
+          for well in wells:
+            if player_rect.colliderect(well.inflate(60, 30)):
+              water_ammo = BUCKET_CAPACITY
 
-        elif event.key == pygame.K_f:
-          if has_bucket and water_ammo > 0:
-            water_ammo -= 1
-            dir_mult = 1 if facing_right else -1
-            for i in range(4):
-              splash_effects.append({
-                  "x": hero_x + (hero_width // 2) + (dir_mult * 35),
-                  "y": hero_y + 42 + (i * 4),
-                  "vx": dir_mult * (7 + i),
-                  "vy": -3 - (i * 0.5),
-                  "life": 18,
-              })
+        elif event.key == pygame.K_f and has_bucket and water_ammo > 0:
+          water_ammo -= 1
+          dir_mult = 1 if facing_right else -1
+          for i in range(4):
+            splash_effects.append({
+                "x": hero_x + (hero_width // 2) + (dir_mult * 35),
+                "y": hero_y + 42 + (i * 4),
+                "vx": dir_mult * (7 + i),
+                "vy": -3 - (i * 0.5),
+                "life": 18,
+            })
 
-            attack_area = get_spray_area(player_rect)
-            cfg = DIFFICULTY_SETTINGS[selected_difficulty]
-            for tree in burning_trees:
-              if tree["fire_hp"] > 0 and attack_area.colliderect(tree["rect"]):
-                tree["fire_hp"] -= 1
-                score += 50
-                if tree["fire_hp"] == 0:
-                  player_coins += 25
-                  breath = min(100.0, breath + cfg["breath_heal_on_extinguish"])
+          attack_area = get_spray_area(player_rect)
+          cfg = DIFFICULTY_SETTINGS[selected_difficulty]
+          for tree in burning_trees:
+            if tree["fire_hp"] > 0 and attack_area.colliderect(tree["rect"]):
+              tree["fire_hp"] -= 1
+              score += 50
+              if tree["fire_hp"] == 0:
+                player_coins += 25
+                breath = min(100.0, breath + cfg["breath_heal_on_extinguish"])
 
   # 2. Update & Render Tampilan Berdasarkan State
   if current_state == GameState.INTRO:
@@ -1013,14 +1020,16 @@ while running:
 
         # Area tubuh api: melewati/menerobos pohon yang belum padam mengurangi nyawa
         fire_hazard_rect = tree["rect"].inflate(-28, -15)
-        if player_rect.colliderect(fire_hazard_rect):
-          if now_ms - tree["last_hurt_time"] >= cfg["fire_cooldown_ms"]:
-            tree["last_hurt_time"] = now_ms
-            if "Baju Anti Api" in inventory and not tree["armor_blocked"]:
-              tree["armor_blocked"] = True
-            else:
-              lives -= 1
-              hurt_flash_timer = 15
+        if (
+            player_rect.colliderect(fire_hazard_rect)
+            and now_ms - tree["last_hurt_time"] >= cfg["fire_cooldown_ms"]
+        ):
+          tree["last_hurt_time"] = now_ms
+          if "Baju Anti Api" in inventory and not tree["armor_blocked"]:
+            tree["armor_blocked"] = True
+          else:
+            lives -= 1
+            hurt_flash_timer = 15
 
     # Pengurangan indikator pernafasan akibat asap karhutla
     drain_rate = cfg["breath_base_drain"]
@@ -1125,8 +1134,9 @@ while running:
               font_prompt.render("Tekan [F] Siram Api!", True, (255, 110, 110)),
               (tree["rect"].x - camera_x, tree["rect"].y - 25),
           )
-        elif abs(player_rect.centerx - tree["rect"].centerx) < 110 and (
-            player_rect.top > tree["rect"].bottom - 35
+        elif (
+            abs(player_rect.centerx - tree["rect"].centerx) < 110
+            and player_rect.top > tree["rect"].bottom - 35
         ):
           screen.blit(
               font_prompt.render(
